@@ -1,0 +1,91 @@
+import streamlit as st
+import fitz  # PyMuPDF
+import re
+
+# ======== 補句函式 ========
+def extract_until_sentence_end(lines, index):
+    sentence = lines[index].strip()
+    # 避免把縮寫或基因名當句尾
+    end_pattern = r'(?<!\b[A-Z])(?<!\b[A-Za-z]\.)[\.。!！？?]'
+
+    i = index + 1
+    while i < len(lines):
+        next_line = lines[i].strip()
+
+        # 遇到頁碼或空行就停止
+        if re.match(r'\[Page \d+\]', next_line) or next_line == '':
+            break
+
+        # 處理被分字的情況
+        if sentence.endswith('-'):
+            sentence = sentence[:-1] + next_line  # 移除 -，直接接下一行
+        else:
+            sentence += ' ' + next_line  # 否則用空格接
+
+        # 判斷是否可以結束句子
+        if re.search(end_pattern, next_line):
+            if not next_line.endswith('-'):
+                break
+
+        i += 1
+
+    return sentence.strip()
+
+# ======== PDF 處理 ========
+def extract_text(pdf_file, keyword, mode="line"):
+    results = []
+
+    try:
+        doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    except:
+        st.error("Cannot open PDF.")
+        return []
+
+    for page_num, page in enumerate(doc, start=1):
+        text = page.get_text()
+
+        if mode == "paragraph":
+            units = text.split("\n\n")
+            for u in units:
+                if keyword.lower() in u.lower():
+                    result = f"[Page {page_num}]\n{u}\n" + "-" * 70 + "\n"
+                    results.append(result)
+        else:  # line 模式
+            lines = text.splitlines()
+            for i, line in enumerate(lines):
+                if keyword.lower() in line.lower():
+                    full_sentence = extract_until_sentence_end(lines, i)
+                    result = f"[Page {page_num}]\n{full_sentence}\n" + "-" * 70 + "\n"
+                    results.append(result)
+
+    doc.close()
+    return results
+
+# ======== Streamlit UI ========
+st.title("PDF Keyword Extractor with Sentence Merge")
+
+uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
+keyword = st.text_input("Enter search keyword")
+
+mode = st.radio("Search Mode", ("line", "paragraph"))
+
+if st.button("Extract"):
+    if not uploaded_file:
+        st.warning("Please upload a PDF first.")
+    elif not keyword:
+        st.warning("Please enter a keyword.")
+    else:
+        with st.spinner("Extracting..."):
+            results = extract_text(uploaded_file, keyword, mode)
+        if not results:
+            st.info("No content found containing the keyword.")
+        else:
+            st.text_area("Results", value="".join(results), height=400)
+
+            # 提供下載
+            st.download_button(
+                label="Download as TXT",
+                data="".join(results),
+                file_name="extracted_text.txt",
+                mime="text/plain"
+            )
